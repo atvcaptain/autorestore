@@ -182,7 +182,7 @@ spinner() {
     done
 }
 
-# --- fbprogress integration with 80-char truncation ---------------------------
+# --- fbprogress integration with 78-char truncation ---------------------------
 FBP_BIN=/usr/bin/fbprogress
 FBP_PIPE=/tmp/fbprogress_pipe
 FBP_ON=0
@@ -195,12 +195,12 @@ W_PLUGINS_REMOVE=5
 W_MYRESTORE=10
 W_FINISH=5
 
-# sanitize and truncate text to max 80 characters (single line)
+# sanitize and truncate text to max 78 characters (single line)
 sanitize_and_trunc() {
-    # replace newlines with spaces, trim to 80 bytes
-    # Note: printf '%.80s' truncates safely for ASCII/UTF-8 byte count
+    # replace newlines with spaces, trim to 78 bytes
+    # Note: printf '%.78s' truncates safely for ASCII/UTF-8 byte count
     msg="$(printf '%s' "$*" | tr '\n' ' ')"
-    printf '%.80s' "$msg"
+    printf '%.78s' "$msg"
 }
 
 fbp_safe_send() {
