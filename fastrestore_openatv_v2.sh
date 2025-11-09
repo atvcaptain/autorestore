@@ -311,10 +311,10 @@ progress_opkg_packages() {
                 echo "$line" >>"$TMPLOG"
                 log "$line"
                 case "$line" in
-                    *"Downloading"*) progress_set "$pct" "$label – Downloading";;
-                    *"Installing "*) progress_set "$pct" "$label – Installing";;
-                    *"Upgrading "*)  progress_set "$pct" "$label – Upgrading";;
-                    *"Configuring "*)progress_set "$pct" "$label – Configuring";;
+                    *"Downloading"*) progress_set "$pct" "$label Downloading";;
+                    *"Installing "*) progress_set "$pct" "$label Installing";;
+                    *"Upgrading "*)  progress_set "$pct" "$label Upgrading";;
+                    *"Configuring "*)progress_set "$pct" "$label Configuring";;
                     *)               progress_set "$pct" "$label";;
                 esac
             done
@@ -323,13 +323,13 @@ progress_opkg_packages() {
                 echo "$line" >>"$TMPLOG"
                 log "$line"
                 case "$line" in
-                    *"Removing "*) progress_set "$pct" "$label – Removing";;
+                    *"Removing "*) progress_set "$pct" "$label Removing";;
                     *)             progress_set "$pct" "$label";;
                 esac
             done
         fi
         pct_done=$(( pct > start ? pct : start+1 ))
-        progress_set "$pct_done" "$label – done"
+        progress_set "$pct_done" "$label done"
     done
     progress_set "$end" "opkg $mode: finished ($total packages)"
 }
