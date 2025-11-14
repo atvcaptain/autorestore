@@ -663,99 +663,90 @@ pct=$((pct+W_NET))
 pct=$(progress_phase_done "$pct" "$W_TURBO_PREP" "Services/Preparation")
 
 # 4) Plugin restore with extended debug (fast mode)
+# ------------------- FAST MODE: v1-STYLE PLUGIN RESTORE + FBPROGRESS -------------------
+
 if [ "$plugins" -eq 1 ] && [ -e "${ROOTFS}tmp/installed-list.txt" ]; then
     log ""
-    log "====================[ FAST MODE: PLUGIN RESTORE START ]===================="
+    log "====================[ FAST MODE: PLUGIN RESTORE (v1-style) ]===================="
+    log ""
 
-    # Read package list
-    allpkgs="$(cat "${ROOTFS}tmp/installed-list.txt" 2>/dev/null || echo "")"
-    total_count=$(printf "%s\n" $allpkgs | wc -w)
-    log "Detected installed-list.txt: total entries = $total_count"
-    log "Raw package list:"
-    printf "%s\n" $allpkgs >> "$LOG"
+    # Always use the original list (v1 behavior)
+    if [ ! -e "${ROOTFS}tmp/installed-list.txt.ORIG" ]; then
+        cp "${ROOTFS}tmp/installed-list.txt" "${ROOTFS}tmp/installed-list.txt.ORIG"
+        log "Saved installed-list.txt.ORIG (initial plugin list)"
+    fi
 
+    allpkgs="$(cat "${ROOTFS}tmp/installed-list.txt.ORIG" 2>/dev/null || echo "")"
+    log "Loaded original installed plugin list:"
+    printf "%s\n" $allpkgs | while IFS= read -r p; do log "  ORIG: $p"; done
+
+    # OPKG UPDATE (v1 order)
     feeds_start="$pct"
     feeds_end=$((pct + 5))
-    main_install_end=$((pct + W_PLUGINS_INSTALL))
-
-    log ">>> STEP 1: OPKG FEED UPDATE (${feeds_start}-${feeds_end})"
+    log "Running initial opkg update..."
     progress_opkg_update "$feeds_start" "$feeds_end"
 
-    log ">>> STEP 2: LOCAL IPK INSTALL (${feeds_end}-$((feeds_end + 5)))"
-    local_end=$((feeds_end + 5))
-    install_local_ipk_progress "$feeds_end" "$local_end"
-
-    # Split feed-meta packages and normal plugin packages
+    # Split feedmeta vs normal plugins (v1 logic)
     feedmeta=""
     pkgs=""
-    for p in $allpkgs; do
-        case "$p" in
-            *-feed-*) feedmeta="$feedmeta $p" ;;
-            *)        pkgs="$pkgs $p" ;;
+    for pkg in $allpkgs; do
+        case "$pkg" in
+            *-feed-*)
+                feedmeta="$feedmeta $pkg"
+                ;;
+            *)
+                pkgs="$pkgs $pkg"
+                ;;
         esac
     done
-    log "Feed-meta packages: ${feedmeta:-<none>}"
-    log "Plugin packages (pre-filter): ${pkgs:-<none>}"
 
-    # Install feed meta packages
-    meta_end=$((local_end + 5))
+    log "Meta-feed packages: ${feedmeta:-<none>}"
+    log "Normal plugin packages (pre-filter): ${pkgs:-<none>}"
+
+    # --- Install feed meta-packages (v1 logic) ---
+    meta_end=$((feeds_end + 10))
     if [ -n "$feedmeta" ]; then
-        log ">>> STEP 3: INSTALL FEED META (${local_end}-${meta_end})"
-        progress_opkg_packages install "$local_end" "$meta_end" $feedmeta
+        log "Installing meta-feed packages..."
+        progress_opkg_packages install "$feeds_end" "$meta_end" $feedmeta
+        log "Meta-feed installation complete. Updating feeds again..."
+        opkg update 2>&1 | while IFS= read -r line; do log "$line"; done
     else
-        progress_set "$meta_end" "No feed meta packages found"
-        log "No feed meta packages found."
+        progress_set "$meta_end" "No meta-feed packages"
+        log "No meta-feed packages."
     fi
 
-    # Refresh feeds again
-    refresh_end=$((meta_end + 3))
-    log ">>> STEP 4: SECOND OPKG FEED UPDATE (${meta_end}-${refresh_end})"
-    progress_opkg_update "$meta_end" "$refresh_end"
-
-    # Blacklist filtering
+    # --- Blacklist handling (v1 logic) ---
     if [ -f /usr/lib/package.lst ]; then
+        log "Filtering blacklisted packages (v1 behavior)..."
         blacklist="$(awk '{print $1}' /usr/lib/package.lst)"
-        log "Blacklist entries:"
-        printf "%s\n" "$blacklist" >> "$LOG"
-        pkgs_filtered=""
+        filtered=""
         for pkg in $pkgs; do
             if printf '%s\n' "$blacklist" | grep -qx -- "$pkg"; then
-                log "Skipping blacklisted package: $pkg"
+                log "Skipping blacklisted: $pkg"
             else
-                pkgs_filtered="$pkgs_filtered $pkg"
+                filtered="$filtered $pkg"
             fi
         done
-        pkgs="$(printf "%s" "$pkgs_filtered" | sed 's/^ *//;s/  */ /g')"
+        pkgs="$filtered"
+        log "Packages after blacklist: ${pkgs:-<none>}"
     fi
-    log "Plugin packages after blacklist filtering: ${pkgs:-<empty>}"
 
-    # Reduce to missing packages only
+    # --- Plugin install (main part) ---
+    main_install_end=$((meta_end + W_PLUGINS_INSTALL))
     if [ -n "$pkgs" ]; then
-        pkgs_missing=""
-        for pkg in $pkgs; do
-            if opkg status "$pkg" 2>/dev/null | grep -q '^Status:.*install ok installed'; then
-                log "Already installed: $pkg"
-            else
-                pkgs_missing="$pkgs_missing $pkg"
-            fi
-        done
-        pkgs="$(printf "%s" "$pkgs_missing" | sed 's/^ *//;s/  */ /g')"
-    fi
-    log "Final plugin install list (missing only): ${pkgs:-<empty>}"
-
-    # Install remaining plugin packages
-    if [ -n "$pkgs" ]; then
-        log ">>> STEP 5: INSTALL PLUGINS (${refresh_end}-${main_install_end})"
-        progress_opkg_packages install "$refresh_end" "$main_install_end" $pkgs
+        log "Installing plugins (v1 logic but with fbprogress)..."
+        progress_opkg_packages install "$meta_end" "$main_install_end" $pkgs
     else
-        progress_set "$main_install_end" "No plugin packages to install"
-        log "No plugin packages to install."
+        log "No plugins to install."
+        progress_set "$main_install_end" "No plugins to install"
     fi
 
     pct="$main_install_end"
-    log "====================[ FAST MODE: PLUGIN RESTORE END ]======================"
+    log ""
+    log "====================[ FAST MODE: PLUGIN RESTORE DONE ]===================="
     log ""
 fi
+
 
 
 
