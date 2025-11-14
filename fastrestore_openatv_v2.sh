@@ -666,7 +666,6 @@ pct=$(progress_phase_done "$pct" "$W_TURBO_PREP" "Services/Preparation")
 if [ "$plugins" -eq 1 ] && [ -e "${ROOTFS}tmp/installed-list.txt" ]; then
     log ""
     log "====================[ FAST MODE: PLUGIN RESTORE START ]===================="
-    date +"[%Y-%m-%d %H:%M:%S] Phase start" >> "$LOG"
 
     # Read package list
     allpkgs="$(cat "${ROOTFS}tmp/installed-list.txt" 2>/dev/null || echo "")"
@@ -755,7 +754,6 @@ if [ "$plugins" -eq 1 ] && [ -e "${ROOTFS}tmp/installed-list.txt" ]; then
 
     pct="$main_install_end"
     log "====================[ FAST MODE: PLUGIN RESTORE END ]======================"
-    date +"[%Y-%m-%d %H:%M:%S] Phase end" >> "$LOG"
     log ""
 fi
 
