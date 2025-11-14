@@ -509,22 +509,29 @@ install_local_ipk_progress() {
     start="$1"; end="$2"
     found=0
     for i in hdd mmc usb backup; do
-        if ls "/media/${i}/images/ipk/"*.ipk >/dev/null 2>&1; then
-            found=1
-            progress_set "$start" "Installing local IPKs from $i..."
-            (
-                opkg install "/media/${i}/images/ipk/"*.ipk 2>&1 | while IFS= read -r line; do
-                    log "$line"
-                    progress_set "$start" "local ipk: $line"
-                done
-            ) &
-            pid=$!
-            progress_track_pid "$pid" "$start" "$end" "Local IPKs ($i)"
-            wait "$pid" 2>/dev/null || true
-        fi
+        for dir in \
+            "/media/${i}/images/ipk" \
+            "/media/${i}/plugins" \
+            "/media/${i}/images/plugins"
+        do
+            if ls "$dir/"*.ipk >/dev/null 2>&1; then
+                found=1
+                progress_set "$start" "Installing local IPKs from ${dir##/media/}..."
+                (
+                    opkg install "$dir/"*.ipk 2>&1 | while IFS= read -r line; do
+                        log "$line"
+                        progress_set "$start" "local ipk: $line"
+                    done
+                ) &
+                pid=$!
+                progress_track_pid "$pid" "$start" "$end" "Local IPKs (${dir##/media/})"
+                wait "$pid" 2>/dev/null || true
+            fi
+        done
     done
     [ "$found" -eq 0 ] && progress_set "$end" "No local IPKs found"
 }
+
 
 restart_services() {
     log ""
@@ -694,20 +701,38 @@ if [ "$plugins" -eq 1 ] && [ -e "${ROOTFS}tmp/installed-list.txt" ]; then
     refresh_end=$((meta_end + 3))
     progress_opkg_update "$meta_end" "$refresh_end"
 
-    # 5) Filter blacklisted pkgs (fixed)
+    # 5) Filter blacklisted packages (newline-safe + logging)
     if [ -f /usr/lib/package.lst ]; then
         blacklist="$(awk '{print $1}' /usr/lib/package.lst)"
         pkgs_filtered=""
         for pkg in $pkgs; do
-            echo "$blacklist" | grep -qx "$pkg" \
-                && log "Skipping blacklisted: $pkg" \
-                || pkgs_filtered="$pkgs_filtered $pkg"
+            if printf '%s\n' "$blacklist" | grep -qx -- "$pkg"; then
+                log "Skipping blacklisted: $pkg"
+            else
+                pkgs_filtered="$pkgs_filtered $pkg"
+            fi
         done
-        pkgs="$(printf "%s" "$pkgs_filtered" | sed 's/^ *//;s/  */ /g')"
+        pkgs="$(printf '%s' "$pkgs_filtered" | sed 's/^ *//;s/  */ /g')"
     fi
+
+    log "Plugin install list after filtering: ${pkgs:-<empty>}"
+
 
     # 6) Install plugin packages
     if [ -n "$pkgs" ]; then
+        # Reduce to missing packages only (avoid no-op installs)
+        if [ -n "$pkgs" ]; then
+            pkgs_missing=""
+            for pkg in $pkgs; do
+                if opkg status "$pkg" 2>/dev/null | grep -q '^Status:.*install ok installed'; then
+                    log "Already installed: $pkg"
+                else
+                    pkgs_missing="$pkgs_missing $pkg"
+                fi
+            done
+            pkgs="$(printf '%s' "$pkgs_missing" | sed 's/^ *//;s/  */ /g')"
+        fi
+        log "Plugin install list (missing only): ${pkgs:-<empty>}"
         progress_opkg_packages install "$refresh_end" "$main_install_end" $pkgs
     else
         progress_set "$main_install_end" "No plugin packages to install"
