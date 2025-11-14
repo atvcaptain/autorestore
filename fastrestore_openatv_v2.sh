@@ -663,19 +663,18 @@ pct=$((pct+W_NET))
 pct=$(progress_phase_done "$pct" "$W_TURBO_PREP" "Services/Preparation")
 
 # 4) Plugin restore with extended debug (fast mode)
-# ---------------- FAST MODE: Correct v1-style Plugin Restore -----------------
-
 if [ "$plugins" -eq 1 ] && [ -e "${ROOTFS}tmp/installed-list.txt" ]; then
     log ""
     log "====================[ FAST MODE: PLUGIN RESTORE ]===================="
-    log ""
 
-    # 1. Load installed list
+    # 1) installed-list laden
     allpkgs="$(cat "${ROOTFS}tmp/installed-list.txt" 2>/dev/null || echo "")"
-    log "Original plugin list:"
-    printf "%s\n" $allpkgs | while read a; do log "  $a"; done
+    log "Original installed-list.txt content:"
+    for a in $allpkgs; do
+        log "  LIST: $a"
+    done
 
-    # 2. Split feed meta packages
+    # 2) feedmeta vs pkgs splitten
     feedmeta=""
     pkgs=""
     for p in $allpkgs; do
@@ -685,44 +684,51 @@ if [ "$plugins" -eq 1 ] && [ -e "${ROOTFS}tmp/installed-list.txt" ]; then
         esac
     done
 
-    log "Feed meta packages: ${feedmeta:-<none>}"
-    log "Normal packages pre-filter: ${pkgs:-<none>}"
+    log "Feedmeta packages: ${feedmeta:-<none>}"
+    log "Normal packages (pre-filter): ${pkgs:-<none>}"
 
-    # 3. Install meta feeds
+    # 3) feedmeta installieren
     feeds_start="$pct"
     feeds_end=$((pct + 5))
-    progress_set "$feeds_start" "Installing meta feeds..."
 
     if [ -n "$feedmeta" ]; then
+        log "Installing feedmeta packages..."
         progress_opkg_packages install "$feeds_start" "$feeds_end" $feedmeta
     else
-        progress_set "$feeds_end" "No meta feeds found"
+        log "No feedmeta packages found."
+        progress_set "$feeds_end" "No feedmeta packages"
     fi
 
-    # Mandatory re-update after meta feeds
-    log "Updating feeds AFTER meta feed install..."
-    progress_opkg_update "$feeds_end" $((feeds_end+5))
+    # 4) opkg update nach feedmeta
+    log "Running opkg update after feedmeta..."
+    upd_start="$feeds_end"
+    upd_end=$((upd_start + 5))
+    progress_opkg_update "$upd_start" "$upd_end"
 
-    # 4. Apply blacklist stage A (/usr/lib/package.lst)
-    log "Applying package.lst blacklist..."
+    # 5) Filter A: /usr/lib/package.lst
+    log "Filter A: removing packages that exist in /usr/lib/package.lst"
     if [ -f /usr/lib/package.lst ]; then
-        bl_file="$(awk '{print $1}' /usr/lib/package.lst)"
-        log "package.lst contains:"
-        printf "%s\n" "$bl_file" >> "$LOG"
+        # Nur erstes Feld (Paketname)
+        pkglist_names="$(awk '{print $1}' /usr/lib/package.lst)"
+        log "package.lst contains $(echo "$pkglist_names" | wc -w) entries"
 
-        tmp=""
+        log "pkgs BEFORE package.lst filter: ${pkgs:-<empty>}"
+        filtered=""
         for p in $pkgs; do
-            if printf "%s\n" "$bl_file" | grep -qx "$p"; then
-                log "BLACKLIST(package.lst): $p"
+            if printf '%s\n' "$pkglist_names" | grep -qx -- "$p"; then
+                log "  A-FILTER: $p is in package.lst -> remove"
             else
-                tmp="$tmp $p"
+                filtered="$filtered $p"
             fi
         done
-        pkgs="$tmp"
+        pkgs="$filtered"
+        log "pkgs AFTER package.lst filter: ${pkgs:-<empty>}"
+    else
+        log "WARNING: /usr/lib/package.lst not found, skipping Filter A"
     fi
 
-    # 5. Apply manual extended blacklist
-    log "Applying manual blacklist..."
+    # 6) Filter B: manuelle Blacklist
+    log "Filter B: applying manual blacklist"
     MANUAL_BL="
 bash-locale-*
 nano*
@@ -737,37 +743,43 @@ iptables-module-ip6t-ipv6header
 tar-locale-*
 "
 
-    tmp2=""
+    log "pkgs BEFORE manual blacklist: ${pkgs:-<empty>}"
+    filtered2=""
     for p in $pkgs; do
         skip=0
         for pat in $MANUAL_BL; do
+            [ -z "$pat" ] && continue
             case "$p" in
                 $pat)
-                    log "BLACKLIST(manual): $p ($pat)"
+                    log "  B-FILTER: $p matches pattern '$pat' -> remove"
                     skip=1
                     break
-                ;;
+                    ;;
             esac
         done
-        [ $skip -eq 0 ] && tmp2="$tmp2 $p"
+        [ "$skip" -eq 0 ] && filtered2="$filtered2 $p"
     done
-    pkgs="$tmp2"
+    pkgs="$filtered2"
+    log "pkgs AFTER manual blacklist: ${pkgs:-<empty>}"
 
-    log "Remaining packages to install: ${pkgs:-<none>}"
+    # 7) Verbleibende Pakete installieren
+    install_start="$upd_end"
+    install_end=$((install_start + W_PLUGINS_INSTALL))
 
-    # 6. Install remaining plugin packages
-    install_end=$((feeds_end + W_PLUGINS_INSTALL))
+    log "Final plugin install list: ${pkgs:-<empty>}"
     if [ -n "$pkgs" ]; then
-        progress_opkg_packages install "$feeds_end" "$install_end" $pkgs
+        log "Starting plugin installation..."
+        progress_opkg_packages install "$install_start" "$install_end" $pkgs
     else
+        log "No plugins left to install after filtering."
         progress_set "$install_end" "No plugins to install"
     fi
 
     pct="$install_end"
-    log ""
-    log "====================[ PLUGIN RESTORE COMPLETE ]===================="
+    log "====================[ FAST MODE: PLUGIN RESTORE DONE ]===================="
     log ""
 fi
+
 
 
 # 5) Remove plugins (if any) with detailed progress
