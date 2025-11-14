@@ -662,7 +662,7 @@ pct=$((pct+W_NET))
 (restart_services)
 pct=$(progress_phase_done "$pct" "$W_TURBO_PREP" "Services/Preparation")
 
-# 4) Plugin restore with extended debug (fast mode)
+# 4) Plugin restore (v1 logic + fbprogress + full debug, fixed pkgs overwrite)
 if [ "$plugins" -eq 1 ] && [ -e "${ROOTFS}tmp/installed-list.txt" ]; then
     log ""
     log "====================[ FAST MODE: PLUGIN RESTORE ]===================="
@@ -674,18 +674,18 @@ if [ "$plugins" -eq 1 ] && [ -e "${ROOTFS}tmp/installed-list.txt" ]; then
         log "  LIST: $a"
     done
 
-    # 2) feedmeta vs pkgs splitten
+    # 2) feedmeta vs plugin_pkgs splitten
     feedmeta=""
-    pkgs=""
+    plugin_pkgs=""
     for p in $allpkgs; do
         case "$p" in
             *-feed-*) feedmeta="$feedmeta $p" ;;
-            *)        pkgs="$pkgs $p" ;;
+            *)        plugin_pkgs="$plugin_pkgs $p" ;;
         esac
     done
 
     log "Feedmeta packages: ${feedmeta:-<none>}"
-    log "Normal packages (pre-filter): ${pkgs:-<none>}"
+    log "Normal packages (pre-filter): ${plugin_pkgs:-<none>}"
 
     # 3) feedmeta installieren
     feeds_start="$pct"
@@ -693,10 +693,11 @@ if [ "$plugins" -eq 1 ] && [ -e "${ROOTFS}tmp/installed-list.txt" ]; then
 
     if [ -n "$feedmeta" ]; then
         log "Installing feedmeta packages..."
+        # Achtung: progress_opkg_packages überschreibt globale 'pkgs'
         progress_opkg_packages install "$feeds_start" "$feeds_end" $feedmeta
     else
         log "No feedmeta packages found."
-        progress_set "$feeds_end" "No feedmeta packages"
+        progress_set "$feeds_end" "No meta feeds"
     fi
 
     # 4) opkg update nach feedmeta
@@ -705,10 +706,13 @@ if [ "$plugins" -eq 1 ] && [ -e "${ROOTFS}tmp/installed-list.txt" ]; then
     upd_end=$((upd_start + 5))
     progress_opkg_update "$upd_start" "$upd_end"
 
+    # *** WICHTIG: Pluginliste jetzt explizit aus plugin_pkgs setzen ***
+    pkgs="$plugin_pkgs"
+    log "pkgs BEFORE any blacklist filter: ${pkgs:-<empty>}"
+
     # 5) Filter A: /usr/lib/package.lst
     log "Filter A: removing packages that exist in /usr/lib/package.lst"
     if [ -f /usr/lib/package.lst ]; then
-        # Nur erstes Feld (Paketname)
         pkglist_names="$(awk '{print $1}' /usr/lib/package.lst)"
         log "package.lst contains $(echo "$pkglist_names" | wc -w) entries"
 
@@ -779,6 +783,7 @@ tar-locale-*
     log "====================[ FAST MODE: PLUGIN RESTORE DONE ]===================="
     log ""
 fi
+
 
 
 
