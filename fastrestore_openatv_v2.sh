@@ -663,101 +663,111 @@ pct=$((pct+W_NET))
 pct=$(progress_phase_done "$pct" "$W_TURBO_PREP" "Services/Preparation")
 
 # 4) Plugin restore with extended debug (fast mode)
-# ------------------- FAST MODE: v1-STYLE PLUGIN RESTORE + FBPROGRESS -------------------
+# ---------------- FAST MODE: Correct v1-style Plugin Restore -----------------
 
 if [ "$plugins" -eq 1 ] && [ -e "${ROOTFS}tmp/installed-list.txt" ]; then
     log ""
-    log "====================[ FAST MODE: PLUGIN RESTORE (v1-style) ]===================="
+    log "====================[ FAST MODE: PLUGIN RESTORE ]===================="
     log ""
 
-    # Always use the original list (v1 behavior)
-    if [ ! -e "${ROOTFS}tmp/installed-list.txt.ORIG" ]; then
-        cp "${ROOTFS}tmp/installed-list.txt" "${ROOTFS}tmp/installed-list.txt.ORIG"
-        log "Saved installed-list.txt.ORIG (initial plugin list)"
-    fi
+    # 1. Load installed list
+    allpkgs="$(cat "${ROOTFS}tmp/installed-list.txt" 2>/dev/null || echo "")"
+    log "Original plugin list:"
+    printf "%s\n" $allpkgs | while read a; do log "  $a"; done
 
-    allpkgs="$(cat "${ROOTFS}tmp/installed-list.txt.ORIG" 2>/dev/null || echo "")"
-    log "Loaded original installed plugin list:"
-    printf "%s\n" $allpkgs | while IFS= read -r p; do log "  ORIG: $p"; done
-
-    # OPKG UPDATE (v1 order)
-    feeds_start="$pct"
-    feeds_end=$((pct + 5))
-    log "Running initial opkg update..."
-    progress_opkg_update "$feeds_start" "$feeds_end"
-
-    # Split feedmeta vs normal plugins (v1 logic)
+    # 2. Split feed meta packages
     feedmeta=""
     pkgs=""
-    for pkg in $allpkgs; do
-        case "$pkg" in
-            *-feed-*)
-                feedmeta="$feedmeta $pkg"
-                ;;
-            *)
-                pkgs="$pkgs $pkg"
-                ;;
+    for p in $allpkgs; do
+        case "$p" in
+            *-feed-*) feedmeta="$feedmeta $p" ;;
+            *)        pkgs="$pkgs $p" ;;
         esac
     done
 
-    log "Meta-feed packages: ${feedmeta:-<none>}"
-    log "Normal plugin packages (pre-filter): ${pkgs:-<none>}"
+    log "Feed meta packages: ${feedmeta:-<none>}"
+    log "Normal packages pre-filter: ${pkgs:-<none>}"
 
-    # --- Install feed meta-packages (v1 logic) ---
-    meta_end=$((feeds_end + 10))
+    # 3. Install meta feeds
+    feeds_start="$pct"
+    feeds_end=$((pct + 5))
+    progress_set "$feeds_start" "Installing meta feeds..."
+
     if [ -n "$feedmeta" ]; then
-        log "Installing meta-feed packages..."
-        progress_opkg_packages install "$feeds_end" "$meta_end" $feedmeta
-        log "Meta-feed installation complete. Updating feeds again..."
-        opkg update 2>&1 | while IFS= read -r line; do log "$line"; done
+        progress_opkg_packages install "$feeds_start" "$feeds_end" $feedmeta
     else
-        progress_set "$meta_end" "No meta-feed packages"
-        log "No meta-feed packages."
+        progress_set "$feeds_end" "No meta feeds found"
     fi
 
-    # --- v1-compatible blacklist filtering ---
+    # Mandatory re-update after meta feeds
+    log "Updating feeds AFTER meta feed install..."
+    progress_opkg_update "$feeds_end" $((feeds_end+5))
+
+    # 4. Apply blacklist stage A (/usr/lib/package.lst)
+    log "Applying package.lst blacklist..."
     if [ -f /usr/lib/package.lst ]; then
-        log "Applying v1-style blacklist filter..."
+        bl_file="$(awk '{print $1}' /usr/lib/package.lst)"
+        log "package.lst contains:"
+        printf "%s\n" "$bl_file" >> "$LOG"
 
-        # Extract real blacklist entries only (v1 behavior)
-        # Remove locale, base, feed, skin, helpers, and non-plugin items
-        blacklist="$(awk '{print $1}' /usr/lib/package.lst | \
-            grep -Ev '(^locale-|^glibc-|^bash-locale-|^nano-|^mc-|^packagegroup-|^python3-|^tar-locale-|^lib)' \
-        )"
-
-        log "Blacklist entries (v1-filtered):"
-        printf "%s\n" "$blacklist" >> "$LOG"
-
-        filtered=""
-        for pkg in $pkgs; do
-            if printf '%s\n' "$blacklist" | grep -qx -- "$pkg"; then
-                log "Skipping blacklisted: $pkg"
+        tmp=""
+        for p in $pkgs; do
+            if printf "%s\n" "$bl_file" | grep -qx "$p"; then
+                log "BLACKLIST(package.lst): $p"
             else
-                filtered="$filtered $pkg"
+                tmp="$tmp $p"
             fi
         done
-
-        pkgs="$filtered"
-        log "Packages after v1-style blacklist filtering: ${pkgs:-<empty>}"
+        pkgs="$tmp"
     fi
 
-    # --- Plugin install (main part) ---
-    main_install_end=$((meta_end + W_PLUGINS_INSTALL))
+    # 5. Apply manual extended blacklist
+    log "Applying manual blacklist..."
+    MANUAL_BL="
+bash-locale-*
+nano*
+mc*
+*-locale-*
+*-helpers*
+glibc-*
+libglib*
+packagegroup-*
+python3-multiprocessing
+iptables-module-ip6t-ipv6header
+tar-locale-*
+"
+
+    tmp2=""
+    for p in $pkgs; do
+        skip=0
+        for pat in $MANUAL_BL; do
+            case "$p" in
+                $pat)
+                    log "BLACKLIST(manual): $p ($pat)"
+                    skip=1
+                    break
+                ;;
+            esac
+        done
+        [ $skip -eq 0 ] && tmp2="$tmp2 $p"
+    done
+    pkgs="$tmp2"
+
+    log "Remaining packages to install: ${pkgs:-<none>}"
+
+    # 6. Install remaining plugin packages
+    install_end=$((feeds_end + W_PLUGINS_INSTALL))
     if [ -n "$pkgs" ]; then
-        log "Installing plugins (v1 logic but with fbprogress)..."
-        progress_opkg_packages install "$meta_end" "$main_install_end" $pkgs
+        progress_opkg_packages install "$feeds_end" "$install_end" $pkgs
     else
-        log "No plugins to install."
-        progress_set "$main_install_end" "No plugins to install"
+        progress_set "$install_end" "No plugins to install"
     fi
 
-    pct="$main_install_end"
+    pct="$install_end"
     log ""
-    log "====================[ FAST MODE: PLUGIN RESTORE DONE ]===================="
+    log "====================[ PLUGIN RESTORE COMPLETE ]===================="
     log ""
 fi
-
-
 
 
 # 5) Remove plugins (if any) with detailed progress
