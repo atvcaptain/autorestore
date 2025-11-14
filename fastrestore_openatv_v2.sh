@@ -225,8 +225,14 @@ progress_start() {
 
 progress_end() {
     progress_set 100 "Done."
-    [ "$FBP_ON" -eq 1 ] && echo QUIT > "$FBP_PIPE" 2>/dev/null || true
-    FBP_ON=0
+    if [ -p "$FBP_PIPE" ]; then
+        i=0
+        while [ $i -lt 5 ]; do
+            echo QUIT > "$FBP_PIPE" 2>/dev/null && break
+            i=$((i+1))
+            sleep 0.5
+        done
+    fi
 }
 
 progress_set() {
