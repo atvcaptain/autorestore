@@ -715,10 +715,19 @@ if [ "$plugins" -eq 1 ] && [ -e "${ROOTFS}tmp/installed-list.txt" ]; then
         log "No meta-feed packages."
     fi
 
-    # --- Blacklist handling (v1 logic) ---
+    # --- v1-compatible blacklist filtering ---
     if [ -f /usr/lib/package.lst ]; then
-        log "Filtering blacklisted packages (v1 behavior)..."
-        blacklist="$(awk '{print $1}' /usr/lib/package.lst)"
+        log "Applying v1-style blacklist filter..."
+
+        # Extract real blacklist entries only (v1 behavior)
+        # Remove locale, base, feed, skin, helpers, and non-plugin items
+        blacklist="$(awk '{print $1}' /usr/lib/package.lst | \
+            grep -Ev '(^locale-|^glibc-|^bash-locale-|^nano-|^mc-|^packagegroup-|^python3-|^tar-locale-|^lib)' \
+        )"
+
+        log "Blacklist entries (v1-filtered):"
+        printf "%s\n" "$blacklist" >> "$LOG"
+
         filtered=""
         for pkg in $pkgs; do
             if printf '%s\n' "$blacklist" | grep -qx -- "$pkg"; then
@@ -727,8 +736,9 @@ if [ "$plugins" -eq 1 ] && [ -e "${ROOTFS}tmp/installed-list.txt" ]; then
                 filtered="$filtered $pkg"
             fi
         done
+
         pkgs="$filtered"
-        log "Packages after blacklist: ${pkgs:-<none>}"
+        log "Packages after v1-style blacklist filtering: ${pkgs:-<empty>}"
     fi
 
     # --- Plugin install (main part) ---
